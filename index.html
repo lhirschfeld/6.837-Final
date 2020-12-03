@@ -2,42 +2,151 @@
 <html>
 	<head>
 		<meta charset="utf-8">
-		<title>My first three.js app</title>
+		<title>Planets!</title>
 		<style>
 			body { margin: 0; }
 			canvas { display: block; }
 		</style>
 	</head>
 	<body>
+        <div style="display: none;">
+            <div id="vertexShader">
+                varying vec3 local_position;
+                varying vec3 global_normal;
+                varying vec3 camera_direction;
+
+                void main()
+                {
+                    local_position = position * vec3(0.5, 0.5, 0.5) + vec3(0.5, 0.5, 0.5);
+                    global_normal = normalize(normalMatrix * normal);
+                    camera_direction = normalize(cameraPosition - (modelViewMatrix * vec4( position, 1.0 )).xyz);
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+                }
+            </div>
+            <div id="fragmentShader">
+                varying vec3 local_position; // Scaled between 0 and 1.
+                varying vec3 global_normal;
+                varying vec3 camera_direction;
+                uniform vec3 sun_direction;
+                uniform float ks;
+                uniform float kd;
+                uniform float alpha;
+                uniform vec4 octaves;
+                uniform vec4 weights;
+                uniform highp float seed;
+                uniform highp float range;
+
+                // Modified from https://stackoverflow.com/questions/35596705/using-lights-in-three-js-shader
+                struct DirectionalLight {
+                    vec3 direction;
+                    vec3 color;
+                    int shadow;
+                    float shadowBias;
+                    float shadowRadius;
+                    vec2 shadowMapSize;
+                };
+                uniform vec3 directionalLightDirection[ NUM_DIR_LIGHTS ];
+
+                // Modified from http://byteblacksmith.com/improvements-to-the-canonical-one-liner-glsl-rand-for-opengl-es-2-0/
+                vec3 rand(vec3 co)
+                {
+                    highp float a = 12.9898;
+                    highp float b = 78.233;
+                    highp float c = 10.1124;
+                    vec3 mult_vec = vec3(a,b,c);
+                    highp float d = 43758.5453;
+                    vec3 range_vec = vec3(range, range, range);
+                    vec3 new_co = vec3(100.0 * co.x, 100.0 * co.y, 100.0 * co.z);
+                    highp float dt= dot(new_co.xyz, mult_vec.xyz);
+                    highp float sn= mod(dt,3.14);
+                    highp float first = fract(sin(sn) * d);
+
+                    new_co = range_vec + new_co;
+                    dt= dot(new_co.xyz, mult_vec.xyz);
+                    sn= mod(dt,3.14);
+                    highp float second = fract(sin(sn) * d);
+
+                    new_co = range_vec + new_co;
+                    dt= dot(new_co.xyz, mult_vec.xyz);
+                    sn= mod(dt,.00314);
+                    highp float third = fract(sin(sn) * d);
+                    return normalize(vec3(first, second, third));
+                }
+
+                vec3 updateVec(vec3 start_vec, int dim, int index, float octave) {
+                    vec3 new_vec = start_vec;
+                    if (index == 0) {
+                        new_vec[dim] = float(floor(local_position[dim] * octave)) / octave;
+                    } else {
+                        new_vec[dim] = float(ceil(local_position[dim] * octave)) / octave;
+                    }
+
+                    return new_vec;
+                }
+
+                float basicInterpolate(vec2 vals, float t) {
+                    return vals[0] + t * (vals[1] - vals[0]); // vals[0] + (vals[1] - vals[0]) * (6.0 * pow(t, 5.0) - 15.0 * pow(t, 4.0) + 10.0 * pow(t, 3.0));
+                    // float st = t * 3.14159;
+                    // float f = (1.0 - cos(st)) * 0.5;
+                    // return vals[0] * (1.0 - f) + vals[1] * f;
+                }
+
+                float interpolate(float octave) {
+                    vec2 vals0;
+
+                    for (int i = 0; i < 2; i++) {
+                        vec2 vals1;
+                        vec3 grid_position_1 = updateVec(local_position, 0, i, octave);
+
+                        for (int j = 0; j < 2; j++) {
+                            vec2 vals2;
+                            vec3 grid_position_2 = updateVec(grid_position_1, 1, j, octave);
+
+                            for (int k = 0; k < 2; k++) {
+                                vec3 grid_position_3 = updateVec(grid_position_2, 2, k, octave);
+                                vec3 random_vector = rand(grid_position_3);
+                                vals2[k] = dot(vec3(octave, octave, octave) * (local_position - grid_position_3), random_vector);
+                            }
+
+                            float t = mod(local_position[2] * octave, 1.0);
+                            vals1[j] = basicInterpolate(vals2, t);
+                        }
+
+                        float t = mod(local_position[1] * octave, 1.0);
+                        vals0[i] = basicInterpolate(vals1, t);
+                    }
+
+                    float t = mod(local_position[0] * octave, 1.0);
+                    return basicInterpolate(vals0, t) * 0.5 + 0.5;
+                }
+
+
+                void main()
+                {
+                    float lum = 0.0;
+                    for (int i = 0; i < 4; i++) {
+                        lum += weights[i] * interpolate(octaves[i]);
+                    }
+
+                    vec3 normal_sun = normalize(sun_direction);
+                    float sun_dot = dot(normal_sun, global_normal);
+                    vec3 reflected_sun = vec3(2.0 * sun_dot, 2.0 * sun_dot, 2.0 * sun_dot) * normal_sun - normal_sun; 
+
+                    // A custom version of phong reflection.
+                    float scale = kd * sun_dot;
+
+                    if (dot(reflected_sun, camera_direction) > 0.0) {
+                        scale += ks * pow(dot(reflected_sun, camera_direction), alpha);
+                    }
+                    vec3 color_vec = vec3(scale * lum, scale * lum, scale * lum);
+                    gl_FragColor = vec4(color_vec, 1.0); // vec4(lum, lum, lum, 1.0);
+                }
+            </div>
+        </div>
 		<script src="js/three.js"></script>
 		<script src="js/noise.js"></script>
 
 		<script>
-            const greyscaleChannel = (octave, width, height) => {
-                perlin = perlin_grid(2, octave, [width, height]);
-                const data = new Uint8Array(3 * width * height);
-                for (let i = 0; i < width; i++) {
-                    for (let j = 0; j < height; j++) {
-                        let grey = Math.floor((perlin[i][j] + 1) * 255 / 2);
-                        data[3 * (i * width + j)] = grey;
-                        data[3 * (i * width + j) + 1] = grey;
-                        data[3 * (i * width + j) + 2] = grey;
-                    }
-                }
-                return data;
-            }
-
-            const multilayerGreyscaleChannel = (octaves, weights, width, height) => {
-                const data = new Uint8Array(3 * width * height);
-                for (let i = 0; i < octaves.length; i++) {
-                    let octave = greyscaleChannel(octaves[i], width, height);
-                    for (let j = 0; j < octave.length; j++) {
-                        data[j] += Math.floor(weights[i] * octave[j]);
-                    }
-                }
-
-                return data;
-            }
 			const scene = new THREE.Scene();
             const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
             camera.position.z = 4;
@@ -50,17 +159,45 @@
             // scene.add( light );
 
             const directionalLight = new THREE.DirectionalLight( 0xffffff, 1 );
-            directionalLight.position.x = 3;
-            directionalLight.position.z = 2;
+            directionalLight.position.x = 1
+            directionalLight.position.z = 2/3;
             scene.add( directionalLight );
     
-            // const helper = new THREE.DirectionalLightHelper( directionalLight, 1 );
-            // scene.add( helper );
-
             const geometry = new THREE.SphereGeometry( 2, 32, 32 );
-            const texture = new THREE.DataTexture(multilayerGreyscaleChannel([16, 32, 64, 128], [0.4, 0.3, 0.2, 0.1], 1000, 1000), 1000, 1000, THREE.RGBFormat);
-            const material = new THREE.MeshPhongMaterial( {map: texture} );
-            const sphere = new THREE.Mesh( geometry, material );
+
+            const custom_uniforms = {
+                time: { value: 1.0 },
+                seed: { value: Math.floor(Math.random() * 10000) },
+                range: { value: 10000 },
+                sun_direction: { value : new THREE.Vector3(1, 0.5, 0.5) },
+                ks: { value : 100 },
+                kd: { value : 1 },
+                alpha: { value : 5 },
+                octaves: { value: new THREE.Vector4(11, 37, 83, 150) },
+                weights: {value: new THREE.Vector4(0.45, 0.3, 0.2, 0.05)},
+            }
+
+            const uniforms = THREE.UniformsUtils.merge( [
+                // As explained here: https://stackoverflow.com/questions/35596705/using-lights-in-three-js-shader
+                custom_uniforms,
+                THREE.UniformsLib[ "lights" ]
+
+            ] );
+
+
+            const noise_material = new THREE.ShaderMaterial( {
+
+                uniforms: uniforms, 
+                lights: true,
+                vertexShader: document.getElementById( 'vertexShader' ).textContent,
+
+                fragmentShader: document.getElementById( 'fragmentShader' ).textContent
+
+            } );
+
+
+
+            const sphere = new THREE.Mesh( geometry, noise_material );
             scene.add( sphere );
 
             function animate() {
