@@ -26,6 +26,7 @@ uniform float alpha;
 uniform vec4 octaves;
 uniform vec4 speeds;
 uniform vec4 weights;
+uniform vec4 colorWeights;
 uniform vec4 cutoffs;
 uniform mat4 colors;
 uniform highp float seed;
@@ -126,14 +127,22 @@ float interpolate(vec3 surface_position, float octave, float speed) {
 }
 
 vec3 getColor(vec3 position, int max) {
-    vec3 lum = vec3(0, 0, 0);
+    vec4 lum = vec4(0, 0, 0, 0);
     for (int i = 0; i < max; i++) {
-        float temp = interpolate(position, octaves[i], speeds[i]);
-        if (temp > cutoffs[i]) {
-            lum += colors[i].xyz * weights[i] * temp;
+        for (int j = 0; j < max; j++) {
+                if (colorWeights[j] != 0.0) {
+                    lum[j] += weights[i] * interpolate(position, octaves[i] + 0.01 * float(j), speeds[j]);
+                }
         }
     }
-    return lum;
+
+    vec3 color = vec3(0, 0, 0);
+    for (int i = 0; i < max; i++) {
+        if (lum[i] > cutoffs[i]) {
+            color += colors[i].xyz * lum[i] * colorWeights[i];
+        }
+    }
+    return color;
 }
 
 vec3 bumpNormal() {
