@@ -6,7 +6,7 @@ varying vec3 camera_direction;
 void main()
 {
     local_position = position; // vec3(0.5, 0.5, 0.5) + vec3(0.5, 0.5, 0.5);
-    global_normal = normalize(normalMatrix * normal);
+    global_normal = normalize(normalMatrix * normalize(local_position));
     camera_direction = normalize(cameraPosition - (modelViewMatrix * vec4( position, 1.0 )).xyz);
     gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
 }
@@ -19,6 +19,7 @@ varying vec3 camera_direction;
 uniform vec3 sun_direction;
 uniform mat4 rot_mat;
 uniform float time;
+uniform float height;
 uniform float ks;
 uniform float kd;
 uniform float kr;
@@ -100,14 +101,21 @@ float interpolate(vec3 surface_position, float octave, float speed) {
                 vec2 vals3;
                 vec3 grid_position_3 = updateVec(grid_position_2, 2, k, surface_position, octave);
 
-                for (int l = 0; l < 2; l++) {
-                    float t = float(floor(td * octave)) / octave;
-                    if (l == 1) {
-                        t = float(ceil(td * octave)) / octave;
+                if (speed == 0.0) {
+                    vec4 random_vector = rand(vec4(grid_position_3, 0));
+                    float temp = dot(vec3(octave, octave, octave) * (surface_position - grid_position_3), random_vector.xyz);
+                    vals3[0] = temp;
+                    vals3[1] = temp;
+                } else {
+                    for (int l = 0; l < 2; l++) {
+                        float t = float(floor(td * octave)) / octave;
+                        if (l == 1) {
+                            t = float(ceil(td * octave)) / octave;
+                        }
+    
+                        vec4 random_vector = rand(vec4(grid_position_3, t));
+                        vals3[l] = dot(vec4(octave, octave, octave, octave) * (vec4(surface_position, td) - vec4(grid_position_3, t)), random_vector);
                     }
-
-                    vec4 random_vector = rand(vec4(grid_position_3, t));
-                    vals3[l] = dot(vec4(octave, octave, octave, octave) * (vec4(surface_position, td) - vec4(grid_position_3, t)), random_vector);
                 }
 
                 float t = mod(td * octave, 1.0);
@@ -130,9 +138,7 @@ vec3 getColor(vec3 position, int max) {
     vec4 lum = vec4(0, 0, 0, 0);
     for (int i = 0; i < max; i++) {
         for (int j = 0; j < max; j++) {
-                if (colorWeights[j] != 0.0) {
-                    lum[j] += weights[i] * interpolate(position, octaves[i] + 0.01 * float(j), speeds[j]);
-                }
+            lum[j] += weights[i] * interpolate(position, octaves[i] + 0.01 * float(j), speeds[j]);
         }
     }
 
@@ -146,7 +152,9 @@ vec3 getColor(vec3 position, int max) {
 }
 
 vec3 bumpNormal() {
-    float height = 3.0;
+    if (height == 0.0) {
+        return global_normal;
+    }
     float scale = 0.003;
     vec3 surface_position = normalize((rot_mat * vec4(local_position, 1.0)).xyz);
     vec3 up_position = normalize((rot_mat * vec4((normalize(local_position + vec3(0, scale, 0))), 1.0)).xyz);
